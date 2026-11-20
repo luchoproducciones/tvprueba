@@ -101,6 +101,7 @@ fun TvScreen(
     var showInfo by remember { mutableStateOf(true) }
     var channelId by remember { mutableStateOf<String?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
+    var playing by remember { mutableStateOf(false) }
     val rootFocus = remember { FocusRequester() }
     if (current >= channels.size) current = 0
     val channel = channels[current]
@@ -108,12 +109,17 @@ fun TvScreen(
     LaunchedEffect(current) {
         channelId = null
         problem = null
+        playing = false
         showInfo = true
         // Si el canal es un link a una transmisión puntual no hace falta buscar el ID del canal.
         channelId = if (channel.videoId != null) "" else resolver.channelId(channel)
         if (channelId == null) problem = "No se pudo encontrar el canal. Revisá la conexión."
         delay(5000)
         showInfo = false
+        // Si a los 20 segundos no arrancó, avisar en vez de dejar la pantalla negra.
+        delay(15000)
+        if (!playing && problem == null)
+            problem = "${channel.name} no arranca.\nOK: abrir en YouTube · Izquierda: cambiar canal"
     }
     LaunchedEffect(menuOpen) { if (!menuOpen) rootFocus.requestFocus() }
 
@@ -146,11 +152,19 @@ fun TvScreen(
             },
     ) {
         channelId?.let { id ->
-            LivePlayer(id, channel.videoId, Modifier.fillMaxSize()) { code ->
+            LivePlayer(id, channel.videoId, Modifier.fillMaxSize(), onPlaying = { playing = true; problem = null }) { code ->
                 problem = if (code == 101 || code == 150 || code == 152 || code == 153)
-                    "Este canal no permite verse dentro de la app.\nOK: abrir en YouTube · Izquierda: cambiar canal"
+                    "Este canal no permite verse dentro de la app (error $code).\nOK: abrir en YouTube · Izquierda: cambiar canal"
                 else "No se pudo reproducir (error $code)."
             }
+        }
+
+        if (!playing && problem == null) {
+            Text(
+                "Cargando ${channel.name}…",
+                Modifier.align(Alignment.Center),
+                color = Color(0xFFC9D1DC), fontSize = 24.sp,
+            )
         }
 
         problem?.let {

@@ -25,7 +25,13 @@ import androidx.compose.ui.viewinterop.AndroidView
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun LivePlayer(channelId: String, videoId: String?, modifier: Modifier = Modifier, onError: (Int) -> Unit) {
+fun LivePlayer(
+    channelId: String,
+    videoId: String?,
+    modifier: Modifier = Modifier,
+    onPlaying: () -> Unit = {},
+    onError: (Int) -> Unit,
+) {
     val context = LocalContext.current
     val webView = remember {
         WebView(context).apply {
@@ -44,21 +50,30 @@ fun LivePlayer(channelId: String, videoId: String?, modifier: Modifier = Modifie
     }
     val bridge = remember { PlayerBridge() }
     bridge.onError = onError
+    bridge.onPlaying = onPlaying
 
     LaunchedEffect(channelId, videoId) {
         webView.removeJavascriptInterface("Android")
         webView.addJavascriptInterface(bridge, "Android")
-        webView.loadDataWithBaseURL("https://www.youtube.com", playerHtml(channelId, videoId), "text/html", "utf-8", null)
+        // YouTube exige que el reproductor embebido se identifique con un origen/referer propio de la app
+        // (si no, da "error 152/153"). Usamos https://<paquete de la app>, como indica YouTube para WebViews.
+        webView.loadDataWithBaseURL(APP_ORIGIN, playerHtml(channelId, videoId), "text/html", "utf-8", null)
     }
     AndroidView(factory = { webView }, modifier = modifier)
 }
 
+private const val APP_ORIGIN = "https://ar.luis.canalestv"
+
 private class PlayerBridge {
     var onError: (Int) -> Unit = {}
+    var onPlaying: () -> Unit = {}
     private val main = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
     fun error(code: Int) { main.post { onError(code) } }
+
+    @JavascriptInterface
+    fun playing() { main.post { onPlaying() } }
 }
 
 private fun playerHtml(channelId: String, videoId: String?): String {
@@ -76,9 +91,10 @@ function onYouTubeIframeAPIReady() {
   new YT.Player('p', {
     width: '100%', height: '100%', videoId: '$video',
     playerVars: { ${channelVar}autoplay: 1, controls: 0, rel: 0, playsinline: 1,
-                  iv_load_policy: 3, origin: 'https://www.youtube.com' },
+                  iv_load_policy: 3, origin: '$APP_ORIGIN', widget_referrer: '$APP_ORIGIN' },
     events: {
       onReady: function (e) { e.target.unMute(); e.target.playVideo(); },
+      onStateChange: function (e) { if (e.data === 1) Android.playing(); },
       onError: function (e) { Android.error(e.data); }
     }
   });
