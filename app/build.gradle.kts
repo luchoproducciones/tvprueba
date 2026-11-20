@@ -15,6 +15,16 @@ android {
         versionCode = 1
         versionName = "0.1"
     }
+    // Clave de firma fija (uso personal): así cada APK nuevo se instala encima del anterior.
+    // Sin esto GitHub firma cada versión con una clave distinta y la tele rechaza la actualización.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("canalestv.keystore")
+            storePassword = "canalestv"
+            keyAlias = "canalestv"
+            keyPassword = "canalestv"
+        }
+    }
     buildTypes {
         release { isMinifyEnabled = false }
     }
