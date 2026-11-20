@@ -6,7 +6,9 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.setContent
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.compose.ui.platform.ComposeView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,13 +55,25 @@ class MainActivity : ComponentActivity() {
         val resolver = ChannelResolver(this)
         val store = ChannelStore(this)
         val auth = AuthStore(this)
-        setContent {
+
+        // Pantalla = reproductor (abajo) + interfaz Compose transparente (arriba).
+        val root = FrameLayout(this)
+        val player = PlayerHost(this, root)
+        val ui = ComposeView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+        root.addView(ui)
+        setContentView(root)
+        ui.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 // La sesión dura mientras la app está abierta: al volver a entrar, pide usuario y contraseña.
                 var loggedIn by rememberSaveable { mutableStateOf(false) }
+                LaunchedEffect(loggedIn) { if (!loggedIn) player.stop() }
                 if (!loggedIn) LoginScreen(auth) { loggedIn = true }
                 else TvScreen(
-                    store, resolver,
+                    store, resolver, player,
                     onOpenInYouTube = ::openInYouTube,
                     onLogout = { loggedIn = false },
                     onExit = ::finish,
@@ -90,6 +104,7 @@ class MainActivity : ComponentActivity() {
 fun TvScreen(
     store: ChannelStore,
     resolver: ChannelResolver,
+    player: PlayerHost,
     onOpenInYouTube: (Channel) -> Unit,
     onLogout: () -> Unit,
     onExit: () -> Unit,
@@ -152,12 +167,15 @@ fun TvScreen(
                 }
             },
     ) {
-        channelId?.let { id ->
-            LivePlayer(id, channel.videoId, Modifier.fillMaxSize(), onPlaying = { playing = true; problem = null }) { code ->
+        LaunchedEffect(channelId, channel.videoId) {
+            player.onPlaying = { playing = true; problem = null }
+            player.onError = { code ->
                 problem = if (code == 101 || code == 150 || code == 152 || code == 153)
                     "Este canal no permite verse dentro de la app (error $code).\nOK: abrir en YouTube · Izquierda: cambiar canal"
                 else "No se pudo reproducir (error $code)."
             }
+            val id = channelId
+            if (id != null) player.load(id, channel.videoId) else player.stop()
         }
 
         if (!playing && problem == null) {
@@ -165,6 +183,11 @@ fun TvScreen(
                 "Cargando ${channel.name}…",
                 Modifier.align(Alignment.Center),
                 color = Color(0xFFC9D1DC), fontSize = 24.sp,
+            )
+            Text(
+                "Motor web ${player.engineVersion}",
+                Modifier.align(Alignment.BottomEnd).padding(24.dp),
+                color = Color(0xFF6B7380), fontSize = 14.sp,
             )
         }
 

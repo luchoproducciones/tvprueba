@@ -1,82 +1,103 @@
 package ar.luis.canalestv
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Bitmap
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.FrameLayout
 
 /**
- * Reproductor oficial de YouTube (IFrame Player API) dentro de un WebView.
- * Muestra el vivo actual del canal con videoId "live_stream" + parámetro "channel".
- * Publicidad y restricciones las sigue manejando YouTube.
+ * Reproductor oficial de YouTube (IFrame Player API) en un WebView.
  *
- * [onError] recibe el código de error de YouTube (101 y 150 = el canal no permite
- * ver sus videos fuera de YouTube).
+ * El WebView NO va adentro de la interfaz Compose: va directo en la ventana, debajo de una capa
+ * Compose transparente (menú, carteles). En varias teles, si el WebView queda dentro de Compose,
+ * el video se decodifica (se oye) pero no se dibuja.
  */
 @SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun LivePlayer(
-    channelId: String,
-    videoId: String?,
-    modifier: Modifier = Modifier,
-    onPlaying: () -> Unit = {},
-    onError: (Int) -> Unit,
-) {
-    val context = LocalContext.current
-    val webView = remember {
-        WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            // Transparente: en muchas teles el video se dibuja en una capa por DEBAJO de la ventana
-            // y se ve "a través" de un hueco. Si algo pinta negro encima, hay audio pero no imagen.
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            // El WebView no toma el foco: las teclas del control las maneja la app.
-            isFocusable = false
-            isFocusableInTouchMode = false
-            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            webViewClient = WebViewClient()
-            webChromeClient = WebChromeClient()
-        }
-    }
-    val bridge = remember { PlayerBridge() }
-    bridge.onError = onError
-    bridge.onPlaying = onPlaying
+class PlayerHost(context: Context, private val container: FrameLayout) {
 
-    LaunchedEffect(channelId, videoId) {
-        webView.removeJavascriptInterface("Android")
-        webView.addJavascriptInterface(bridge, "Android")
-        // YouTube exige que el reproductor embebido se identifique con un origen/referer propio de la app
-        // (si no, da "error 152/153"). Usamos https://<paquete de la app>, como indica YouTube para WebViews.
+    var onPlaying: () -> Unit = {}
+    var onError: (Int) -> Unit = {}
+
+    private val main = Handler(Looper.getMainLooper())
+    private var customView: View? = null
+
+    val webView: WebView = WebView(context).apply {
+        layoutParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        )
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.mediaPlaybackRequiresUserGesture = false
+        setBackgroundColor(android.graphics.Color.BLACK)
+        // El WebView no toma el foco: las teclas del control las maneja la app.
+        isFocusable = false
+        isFocusableInTouchMode = false
+        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        webViewClient = WebViewClient()
+        webChromeClient = object : WebChromeClient() {
+            // Sin esto algunas teles muestran un ícono gris de "play" encima del video.
+            override fun getDefaultVideoPoster(): Bitmap =
+                Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+
+            // Si el reproductor pasa a pantalla completa, el video llega en una vista aparte.
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                hideCustomView()
+                customView = view
+                container.addView(view, 1, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                ))
+            }
+
+            override fun onHideCustomView() = hideCustomView()
+        }
+        addJavascriptInterface(Bridge(), "Android")
+    }
+
+    init {
+        container.addView(webView, 0)
+    }
+
+    /** Versión del motor web de la tele (para diagnosticar). */
+    val engineVersion: String
+        get() = if (Build.VERSION.SDK_INT >= 26) WebView.getCurrentWebViewPackage()?.versionName ?: "?" else "?"
+
+    fun load(channelId: String, videoId: String?) {
+        hideCustomView()
+        // YouTube exige que el reproductor embebido se identifique con un origen propio de la app
+        // (si no, da "error 152/153"). Usamos https://<paquete de la app>.
         webView.loadDataWithBaseURL(APP_ORIGIN, playerHtml(channelId, videoId), "text/html", "utf-8", null)
     }
-    AndroidView(factory = { webView }, modifier = modifier)
+
+    fun stop() {
+        hideCustomView()
+        webView.loadUrl("about:blank")
+    }
+
+    private fun hideCustomView() {
+        customView?.let { container.removeView(it) }
+        customView = null
+    }
+
+    private inner class Bridge {
+        @JavascriptInterface
+        fun error(code: Int) { main.post { onError(code) } }
+
+        @JavascriptInterface
+        fun playing() { main.post { onPlaying() } }
+    }
 }
 
 private const val APP_ORIGIN = "https://ar.luis.canalestv"
-
-private class PlayerBridge {
-    var onError: (Int) -> Unit = {}
-    var onPlaying: () -> Unit = {}
-    private val main = Handler(Looper.getMainLooper())
-
-    @JavascriptInterface
-    fun error(code: Int) { main.post { onError(code) } }
-
-    @JavascriptInterface
-    fun playing() { main.post { onPlaying() } }
-}
 
 private fun playerHtml(channelId: String, videoId: String?): String {
     // Con videoId reproduce esa transmisión; si no, "live_stream" + channel = el vivo actual del canal.
@@ -85,7 +106,7 @@ private fun playerHtml(channelId: String, videoId: String?): String {
     return """
 <!doctype html>
 <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#p{width:100%;height:100%}</style>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#p{position:fixed;inset:0;width:100%;height:100%}</style>
 </head><body><div id="p"></div>
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
