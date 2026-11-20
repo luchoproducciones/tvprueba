@@ -38,7 +38,9 @@ fun LivePlayer(
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
-            setBackgroundColor(0xFF000000.toInt())
+            // Transparente: en muchas teles el video se dibuja en una capa por DEBAJO de la ventana
+            // y se ve "a través" de un hueco. Si algo pinta negro encima, hay audio pero no imagen.
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
             // El WebView no toma el foco: las teclas del control las maneja la app.
             isFocusable = false
             isFocusableInTouchMode = false

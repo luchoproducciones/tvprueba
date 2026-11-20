@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
         val resolver = ChannelResolver(this)
         val store = ChannelStore(this)
         val auth = AuthStore(this)
@@ -134,7 +135,7 @@ fun TvScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            // Sin fondo propio: el negro lo pone la ventana (ver onCreate), así no tapa el video.
             .focusRequester(rootFocus)
             .focusable()
             .onKeyEvent { e ->
